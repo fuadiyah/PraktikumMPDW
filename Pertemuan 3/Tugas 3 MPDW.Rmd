@@ -1,0 +1,176 @@
+---
+title: "Tugas 3 MPDW"
+author: "Andi Fatihatul Fuadiyah"
+date: "2023-09-18"
+output: html_document
+---
+
+```{r}
+#PACKAGES
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car)
+```
+
+```{r}
+#INPUT DATA
+data<-read.csv("/Users/a.akbaryahya/Documents/PraktikumMPDW/Pertemuan 3/NewDelhi_Air_quality_data.csv")
+str(data)
+data
+```
+
+```{r}
+#SPLIT DATA
+train<-data[1:57,]
+train
+test<-data[58:72,]
+test
+```
+
+```{r}
+#data time series
+train.ts<-ts(train)
+train.ts
+test.ts<-ts(test)
+test.ts
+data.ts<-ts(data)
+data.ts
+```
+## Model Koyck
+
+$$
+y_t=a(1-\lambda)+\beta_0X_t+\beta_1Z_t+\lambda Y_{t-1}+V_t
+$$
+dengan $$V_t=u_t-\lambda u_{t-1}$$
+
+### Pemodelan
+
+```{r}
+#MODEL KOYCK
+model.koyck <- koyckDlm(x = train$Xt, y = train$Yt)
+summary(model.koyck)
+AIC(model.koyck)
+BIC(model.koyck)
+```
+Dari hasil tersebut, didapat bahwa peubah $y_{t-1}$ memiliki nilai $P-Value<0.05$. Hal ini menunjukkan bahwa peubah$y_{t-1}$ berpengaruh signifikan terhadap $y$. Artinya, menurut model Koyck, nilai AQI saat ini dipengaruhi oleh nilai AQI satu hari sebelumnya. Adapun model keseluruhannya adalah sebagai berikut :
+
+### Peramalan dan Akurasi
+
+Berikut adalah hasil peramalan y untuk 15 periode kedepan menggunakan model koyck
+
+```{r}
+fore.koyck <- forecast(model = model.koyck, x=test$Xt, h=15)
+mape.koyck <- MAPE(fore.koyck$forecasts, test$Yt)
+
+#akurasi data training
+GoF(model.koyck)
+```
+
+## Pencarian nilai lag optimum 
+
+```{r}
+#penentuan lag optimum 
+finiteDLMauto(formula = Yt~ Xt,
+              data = data.frame(train),
+              model.type = "dlm", error.type = "AIC", trace = FALSE)
+```
+Berdasarkan output tersebut, lag optimum didapatkan ketika lag=10. Selanjutnya dilakukan pemodelan untuk lag = 10
+
+### Pemodelan (Lag=10)
+
+```{r}
+model.dlm <- dlm(x = train$Xt,y = train$Yt , q = 10)
+summary(model.dlm)
+AIC(model.dlm)
+BIC(model.dlm)
+```
+
+Dari hasil diatas, didapat bahwa $P-value$ dari intercept dan $x_{t-1}<0.05$. Hal ini menunjukkan bahwa intercept dan $x_{t-1}$ berpengaruh signifikan terhadap $y$. Adapun model keseluruhan yang terbentuk adalah sebagai berikut
+
+$$
+\hat{Y_t}=5.79084+0.07093X_t+0.04653X_{t-1}+0.38935X_{t-2}+0.79500X_{t-3}-0.14005X_{t-4}-0.06712X_{t-5}+0.88502X_{t-6}+0.08626X_{t-7} -0.24962{t-8}
++0.23188X_{t-9}+0.38623X_{t-10}
+$$
+### Model Autoregressive Distributed Lag (ARDL)
+
+##Penentuan lag optimum untuk ARDL
+
+```{r}
+#penentuan lag optimum
+model.ardl.opt <- ardlBoundOrders(data = data.frame(data), ic = "AIC", 
+                                  formula = Yt ~ Xt )
+min_p=c()
+for(i in 1:15){
+  min_p[i]=min(model.ardl.opt$Stat.table[[i]])
+}
+q_opt=which(min_p==min(min_p, na.rm = TRUE))
+p_opt=which(model.ardl.opt$Stat.table[[q_opt]] == 
+              min(model.ardl.opt$Stat.table[[q_opt]], na.rm = TRUE))
+data.frame("q_optimum" = q_opt, "p_optimum" = p_opt, 
+           "AIC"=model.ardl.opt$min.Stat)
+```
+Dari tabel di atas, dapat terlihat bahwa nilai AIC terendah didapat ketika $p=13$ dan $q=1$, yaitu sebesar `117.5522`. Artinya, model autoregressive optimum didapat ketika $p=13$ dan $q=1$.
+
+### Pemodelan ARDL
+
+```{r}
+model.ardl <- ardlDlm(x = train$Xt, y = train$Yt, p =13 , q = 1)
+summary(model.ardl)
+AIC(model.ardl)
+BIC(model.ardl)
+```
+Hasil di atas menunjukkan bahwa selain peubah $X_{t-1}$ dan $Y_{t-1}$, hasil uji t menunjukkan nilai-p pada peubah $\ < 0.05$ Hal ini menunjukkan bahwa peubah $X_{t-1}$ dan $Y_{t-1}$ berpengaruh signifikan terhadap $Y_t$, sementara peubah lain tidak berpengaruh signifikan terhadap $Y_t$.
+
+Artinya, menurut model DLM dengan q=13, nilai AQI saat ini dipengaruhi oleh kandungan pm10 1 hari sebelumnya, dan nilai AQI 1 hari sebelumnya. 
+Adapun modelnya seperti berikut:
+
+$$\hat{Y_t}=-2.97233+0.61139X_t-0.62997X_{t-1}+0.51360X_{t-2}+0.40541X_{t-3}-0.49071X_{t-4}-0.16281X_{t-5}+0.81206X_{t-6}-0.47586 X_{t-7}+0.06262X_{t-8}-0.10876X_{t-9}+0.44152X_{t-10}+0.18429X_{t-11}-0.93230X_{t-12}+0.55359X_{t-13}+0.85587Y_{t-14}$$
+
+### Peramalan dan Akurasi Model ARDL
+```{r}
+fore.ardl <- forecast(model = model.ardl, x=test$Xt, h=15)
+fore.ardl
+```
+
+Data di atas merupakan hasil peramalan untuk 15 periode ke depan menggunakan Model Autoregressive 
+
+```{r}
+#akurasi data testing
+mape.ardl <- MAPE(fore.ardl$forecasts, test$Yt)
+
+#akurasi data training
+mape.ardl.train <- GoF(model.ardl)["MAPE"]
+
+c("MAPE Testing"=mape.ardl,"MAPE Training"=mape.ardl.train)
+```
+Berdasarkan akurasi di atas, terlihat bahwa nilai MAPE keduanya tidak jauh berbeda. Artinya, model regresi dengan distribusi lag ini tidak overfitted atau underfitted
+
+### Perbandingan Model
+## Akurasi
+```{r}
+akurasi <- matrix(c(mape.koyck, mape.dlm, mape.ardl))
+row.names(akurasi)<- c("Koyck","DLM","Autoregressive")
+colnames(akurasi) <- c("MAPE")
+akurasi
+```
+Berdasarkan nilai MAPE, model paling optimum didapat pada Model Koyck karena memiliki nilai MAPE yang terkecil.
+
+### Plot
+
+```{r}
+par(mfrow=c(1,1))
+plot(test$Xt, test$Yt, type="b", col="black")
+points(test$Xt, fore.koyck$forecasts,col="coral3")
+lines(test$Xt, fore.koyck$forecasts,col="coral3")
+points(test$Xt, fore.dlm$forecasts,col="blue")
+lines(test$Xt, fore.dlm$forecasts,col="blue")
+points(test$Xt, fore.ardl$forecasts,col="green")
+lines(test$Xt, fore.ardl$forecasts,col="green")
+legend("topleft",c("aktual", "koyck","DLM", "autoregressive"), lty=1, col=c("black","coral3","blue","green"), cex=0.7)
+```
+Berdasarkan plot tersebut, terlihat bahwa plot yang paling mendekati data aktualnya adalah Model Koyck, sehingga dapat disimpulkan model terbaik dalam hal ini adalah model Regresi Koyck.
+
+### Kesimpulan
+Dari ketiga model yang dicobakan terhadap pengaruh kadar $pm10$ terhadap $AQI$ di kota New Delhi, diperoleh kesimpulan bahwa Model Koyck adalah yang paling baik dalam peramalan data tersebut.
